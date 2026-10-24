@@ -59,6 +59,11 @@ func applyLegacyOptions(options LC.EBPF) (LC.EBPF, []string, error) {
 		// New reports the mode error itself; there is nothing to fold.
 		return options, nil, nil
 	}
+	if !localEnabled && !sharedEnabled {
+		// An explicitly disabled listener is a safe no-op. Its role fields do
+		// not participate in legacy normalization or attach-time validation.
+		return options, nil, nil
+	}
 	// Disabled scopes may still contain a complete configuration template.
 	// Keep only the selector before converting or validating legacy settings.
 	if !localEnabled {

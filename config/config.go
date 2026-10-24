@@ -1,11 +1,13 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -480,6 +482,15 @@ type RawConfig struct {
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 }
 
+// OverrideJSONPath points to an optional JSON file whose fields override the parsed RawConfig.
+// Set by the host application before Parse/ParseWithBytes (the Mishka Android app sets it from
+// its --override-json runtime option, see mishka_core/runtime.go).
+var OverrideJSONPath string
+
+// mishkaPatch is an optional hook applied after the override JSON has been merged.
+// Registered via init() in patch_mishka.go when built with the mishka tag; nil otherwise.
+var mishkaPatch func(cfg *RawConfig)
+
 // Parse config
 func Parse(buf []byte) (*Config, error) {
 	rawCfg, err := UnmarshalRawConfig(buf)
@@ -487,7 +498,34 @@ func Parse(buf []byte) (*Config, error) {
 		return nil, err
 	}
 
+	applyOverrideJSON(rawCfg)
+
+	if mishkaPatch != nil {
+		mishkaPatch(rawCfg)
+	}
+
 	return ParseRawConfig(rawCfg)
+}
+
+// applyOverrideJSON merges the JSON file named by OverrideJSONPath into rawCfg.
+// Field names follow the existing `json:` tags of RawConfig. A missing or malformed file only
+// logs a warning: the override is a host-provided runtime input and must not keep the core
+// from starting (the app shows the parse error of the subscription itself instead).
+func applyOverrideJSON(rawCfg *RawConfig) {
+	if OverrideJSONPath == "" {
+		return
+	}
+	data, err := os.ReadFile(OverrideJSONPath)
+	if err != nil {
+		log.Warnln("Read override.json failed: %s", err.Error())
+		return
+	}
+	if len(data) == 0 {
+		return
+	}
+	if err := json.Unmarshal(data, rawCfg); err != nil {
+		log.Warnln("Apply override.json failed: %s", err.Error())
+	}
 }
 
 func DefaultRawConfig() *RawConfig {

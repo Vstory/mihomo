@@ -3,6 +3,8 @@
 package sing_ebpf
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -81,6 +83,63 @@ func TestEnablementSharedEnabledField(t *testing.T) {
 	}
 	if sel.sharedDataPlane != sharedDataPlanePacketRewrite {
 		t.Fatalf("shared default data plane = %q", sel.sharedDataPlane)
+	}
+}
+
+func TestExplicitlyDisabledEBPFIsSafeNoopAndRequiresRebuildToEnable(t *testing.T) {
+	disabled := LC.EBPF{
+		Local: LC.EBPFLocal{
+			Enable:               boolPtr(false),
+			IPv6:                 boolPtr(false),
+			BypassPrivateAddress: boolPtr(false),
+		},
+		Shared: LC.EBPFShared{
+			Enable:               boolPtr(false),
+			IPv6:                 boolPtr(false),
+			BypassPrivateAddress: boolPtr(false),
+			Interface:            []string{"wlan2", "br-lan", "br0"},
+		},
+	}
+	normalized, _, err := applyLegacyOptions(disabled)
+	if err != nil {
+		t.Fatalf("disabled role config should normalize to a no-op: %v", err)
+	}
+	selection, err := normalizeDataPlanes(normalized)
+	if err != nil {
+		t.Fatalf("disabled role selection failed: %v", err)
+	}
+	if selection.mode != ebpfModeDisabled || selection.localEnabled || selection.sharedEnabled {
+		t.Fatalf("disabled selection = %+v", selection)
+	}
+
+	listener, err := New(context.Background(), disabled, nil)
+	if err != nil {
+		t.Fatalf("disabled listener should not validate/attach inactive options: %v", err)
+	}
+	if listener.Address() != "" {
+		t.Fatalf("disabled listener exposed an attached address: %q", listener.Address())
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close disabled listener: %v", err)
+	}
+	if err := listener.Update(disabled); err != nil {
+		t.Fatalf("disabled-to-disabled update should be a no-op: %v", err)
+	}
+
+	enabled := disabled
+	enabled.Local.Enable = boolPtr(true)
+	enabled.Shared.Enable = boolPtr(true)
+	if err := listener.Update(enabled); !errors.Is(err, ErrRebuildRequired) {
+		t.Fatalf("enabling an inactive listener should request normal rebuild, got %v", err)
+	}
+}
+
+func TestDisabledLocalAcceptsExplicitFalseDefaults(t *testing.T) {
+	if err := validateLocalOptions(false, LC.EBPFLocal{
+		IPv6:                 boolPtr(false),
+		BypassPrivateAddress: boolPtr(false),
+	}); err != nil {
+		t.Fatalf("false defaults on disabled local scope should be harmless: %v", err)
 	}
 }
 

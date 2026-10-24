@@ -85,6 +85,11 @@ func (p *path) Resolve(path string) string {
 	return path
 }
 
+// ExtraSafePathFunc lets the embedding host accept paths that are outside the home directory
+// and SAFE_PATHS. It is consulted only after those checks fail, with the resolved path, and is
+// nil unless the host sets it (Mishka's native core does, for its own provider sandbox).
+var ExtraSafePathFunc func(path string) bool
+
 // IsSafePath return true if path is a subpath of homedir (or in the SAFE_PATHS environment variable)
 func (p *path) IsSafePath(path string) bool {
 	if p.allowUnsafePath || features.CMFA {
@@ -98,7 +103,7 @@ func (p *path) IsSafePath(path string) bool {
 			}
 		}
 	}
-	return false
+	return ExtraSafePathFunc != nil && ExtraSafePathFunc(path)
 }
 
 func (p *path) SafePaths() []string {

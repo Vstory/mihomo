@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	ebpfModeLocal  = "local"
-	ebpfModeShared = "shared"
-	ebpfModeHybrid = "hybrid"
+	ebpfModeLocal    = "local"
+	ebpfModeShared   = "shared"
+	ebpfModeHybrid   = "hybrid"
+	ebpfModeDisabled = "disabled"
 
 	dnsModeHijack        = "hijack"
 	dnsModeRespectPolicy = "respect_policy"
@@ -125,10 +126,13 @@ func validateLocalOptions(enabled bool, options LC.EBPFLocal) error {
 	if options.DNSMode != "" {
 		return E.New("local.dns_mode requires local or hybrid mode")
 	}
-	if options.IPv6 != nil {
+	// Explicit false values are harmless on a disabled scope and are commonly
+	// emitted by config generators. True would be misleading because that scope
+	// is not attached, so keep rejecting it.
+	if options.IPv6 != nil && *options.IPv6 {
 		return E.New("local.ipv6 requires local or hybrid mode")
 	}
-	if options.BypassPrivateAddress != nil {
+	if options.BypassPrivateAddress != nil && *options.BypassPrivateAddress {
 		return E.New("local.bypass_private_address requires local or hybrid mode")
 	}
 	if len(options.BypassRuleSet) > 0 {
@@ -353,10 +357,13 @@ func validateSharedOptions(enabled bool, options LC.EBPFShared) error {
 	if options.DNSMode != "" {
 		return E.New("shared.dns_mode requires shared or hybrid mode")
 	}
-	if options.IPv6 != nil {
+	// Explicit false values are harmless on a disabled scope and are commonly
+	// emitted by config generators. True would be misleading because that scope
+	// is not attached, so keep rejecting it.
+	if options.IPv6 != nil && *options.IPv6 {
 		return E.New("shared.ipv6 requires shared or hybrid mode")
 	}
-	if options.BypassPrivateAddress != nil {
+	if options.BypassPrivateAddress != nil && *options.BypassPrivateAddress {
 		return E.New("shared.bypass_private_address requires shared or hybrid mode")
 	}
 	if len(options.Interface) > 0 {
@@ -390,6 +397,9 @@ func normalizeDataPlanes(options LC.EBPF) (normalizedDataPlanes, error) {
 	mode, localEnabled, sharedEnabled, err := normalizeModeWithEnabled(options.Mode, options.Local.Enabled, options.Shared.Enabled)
 	if err != nil {
 		return normalizedDataPlanes{}, err
+	}
+	if !localEnabled && !sharedEnabled {
+		return normalizedDataPlanes{mode: ebpfModeDisabled}, nil
 	}
 	localDataPlane, cgroupPath, err := normalizeLocalDataPlane(options.Local)
 	if err != nil {
@@ -441,7 +451,7 @@ func normalizeModeWithEnabled(mode string, localEnabled, sharedEnabled *bool) (s
 		local := localEnabled != nil && *localEnabled
 		shared := sharedEnabled != nil && *sharedEnabled
 		if !local && !shared {
-			return "", false, false, E.New("local.enable or shared.enable must be true")
+			return ebpfModeDisabled, false, false, nil
 		}
 		switch {
 		case local && shared:
