@@ -15,6 +15,8 @@ import (
 // reflection test below holds withoutInPlaceUpdatableFields to exactly this.
 var inPlaceUpdatableFields = []string{"UDPTimeout", "BypassRuleSet", "BypassTUNDirect"}
 
+func boolOption(value bool) *bool { return &value }
+
 type stubEBPFListener struct {
 	updates int
 	applied LC.EBPF
@@ -213,6 +215,44 @@ func TestEBPFUpdateTreatsARebuildRequestAsUnhandled(t *testing.T) {
 	}
 	if listener.Config().(*EBPFOption).UDPTimeout != 300 {
 		t.Fatal("a refused update adopted the config it did not apply")
+	}
+}
+
+func TestDisabledEBPFUpdateToEnabledRequestsRegistryRebuild(t *testing.T) {
+	options := &EBPFOption{
+		BaseOption: BaseOption{NameStr: "ebpf-in", Listen: "0.0.0.0", SpecialProxy: "DIRECT"},
+		Local: LC.EBPFLocal{
+			Enable:               boolOption(false),
+			IPv6:                 boolOption(false),
+			BypassPrivateAddress: boolOption(false),
+		},
+		Shared: LC.EBPFShared{
+			Enable:               boolOption(false),
+			IPv6:                 boolOption(false),
+			BypassPrivateAddress: boolOption(false),
+			Interface:            []string{"wlan2", "br-lan", "br0"},
+		},
+	}
+	listener, err := NewEBPF(options)
+	if err != nil {
+		t.Fatalf("build disabled wrapper: %v", err)
+	}
+	if err := listener.Listen(nil); err != nil {
+		t.Fatalf("listen disabled no-op: %v", err)
+	}
+	if listener.Address() != "" {
+		t.Fatalf("disabled wrapper exposed a dataplane address: %q", listener.Address())
+	}
+
+	enabled := *options
+	enabled.Local.Enable = boolOption(true)
+	enabled.Shared.Enable = boolOption(true)
+	handled, err := listener.Update(&enabled)
+	if err != nil {
+		t.Fatalf("enabling should fall back to rebuild, not fail: %v", err)
+	}
+	if handled {
+		t.Fatal("disabled listener claimed it applied a mode change without creating a new data plane")
 	}
 }
 

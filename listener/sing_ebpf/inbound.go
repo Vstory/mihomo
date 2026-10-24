@@ -36,6 +36,30 @@ type Listener interface {
 	Update(options LC.EBPF) error
 }
 
+// disabledInbound is returned when both eBPF roles are explicitly disabled.
+// It intentionally owns no kernel resources. Re-enabling a role asks the
+// listener registry for a normal rebuild rather than trying to attach in place.
+type disabledInbound struct{}
+
+func (disabledInbound) Close() error    { return nil }
+func (disabledInbound) Address() string { return "" }
+func (disabledInbound) Update(options LC.EBPF) error {
+	options, _, err := applyLegacyOptions(options)
+	if err != nil {
+		return err
+	}
+	selection, err := normalizeDataPlanes(options)
+	if err != nil {
+		return err
+	}
+	if selection.localEnabled || selection.sharedEnabled {
+		return ErrRebuildRequired
+	}
+	return nil
+}
+
+var _ Listener = disabledInbound{}
+
 type Inbound struct {
 	dnsRelayAccess sync.Mutex
 	dnsRelays      *dnsRelayLimiter
@@ -238,6 +262,10 @@ func New(ctx context.Context, options LC.EBPF, tunnel C.Tunnel, additions ...inb
 		return nil, err
 	}
 	mode, localEnabled, sharedEnabled := selection.mode, selection.localEnabled, selection.sharedEnabled
+	if !localEnabled && !sharedEnabled {
+		log.Debugln("[EBPF] listener disabled; no eBPF data plane will be attached")
+		return disabledInbound{}, nil
+	}
 	if err = validateLocalOptions(localEnabled, options.Local); err != nil {
 		return nil, err
 	}

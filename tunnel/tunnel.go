@@ -420,14 +420,18 @@ func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, decidedM
 					// rules need nothing more, so keep it; other platforms return 0.
 					metadata.Uid = uid
 					if err != nil {
-						log.Debugln("[Process] find process error for %s: %v", metadata.String(), err)
+						log.Debugln("[Process] find process path error for %s: %v", metadata.String(), err)
 					} else {
 						metadata.Process = filepath.Base(path)
 						metadata.ProcessPath = path
+					}
 
-						if pkg, err := process.FindPackageName(metadata); err == nil { // for android (not CMFA) package names
-							metadata.Process = pkg
-						}
+					// The resolver may be Mishka's Android ConnectivityManager bridge and does
+					// not require a UID from INET_DIAG, so call it even when uid == 0.
+					if pkg, pkgErr := process.FindPackageName(metadata); pkgErr == nil {
+						metadata.Process = pkg
+					} else if err != nil {
+						log.Debugln("[Process] find package for uid %d error: %v", uid, pkgErr)
 					}
 				} else {
 					// check package names

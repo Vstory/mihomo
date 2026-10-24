@@ -150,7 +150,9 @@ func (e *EBPF) Listen(tunnel C.Tunnel) error {
 	if err != nil {
 		return err
 	}
-	log.Infoln("EBPF[%s] proxy listening at: %s", e.Name(), e.Address())
+	if address := e.Address(); address != "" {
+		log.Infoln("EBPF[%s] proxy listening at: %s", e.Name(), address)
+	}
 	return nil
 }
 

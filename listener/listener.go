@@ -3,8 +3,6 @@ package listener
 import (
 	"fmt"
 	"net"
-	"net/netip"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,13 +62,6 @@ var (
 
 	LastTunConf  LC.Tun
 	LastTuicConf LC.TuicServer
-
-	// lastTunEBPFExclude is the eBPF-derived route exclusion the last ReCreateTun
-	// call saw. It is not part of LC.Tun, so LastTunConf cannot speak for it, and
-	// like LastTunConf it is recorded even when that call built no device at all
-	// -- the two have to stay in step, and the worst that costs is one extra
-	// no-op rebuild. Guarded by tunMux.
-	lastTunEBPFExclude []netip.Prefix
 )
 
 type Ports struct {
@@ -88,6 +79,13 @@ func GetTunConf() LC.Tun {
 		return LastTunConf
 	}
 	return tunLister.Config()
+}
+
+// LastTunConf 可能记录失败的配置，就绪判断必须查看实际 listener。
+func TunListenerReady() bool {
+	tunMux.Lock()
+	defer tunMux.Unlock()
+	return tunLister != nil
 }
 
 func GetTuicConf() LC.TuicServer {
@@ -359,14 +357,7 @@ func ReCreateVmess(vmessConfig string, tunnel C.Tunnel) {
 }
 
 func ReCreateTuic(config LC.TuicServer, tunnel C.Tunnel) {
-	PatchTuic(func(LC.TuicServer) LC.TuicServer { return config }, tunnel)
-}
-
-// PatchTuic hands patch LastTuicConf under tuicMux, for the reason PatchTun
-// gives.
-func PatchTuic(patch func(last LC.TuicServer) LC.TuicServer, tunnel C.Tunnel) {
 	tuicMux.Lock()
-	config := patch(LastTuicConf)
 	defer func() {
 		LastTuicConf = config
 		tuicMux.Unlock()
@@ -512,29 +503,11 @@ func ReCreateMixed(port int, tunnel C.Tunnel) {
 }
 
 func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
-	PatchTun(func(LC.Tun) LC.Tun { return tunConf }, tunnel)
-}
-
-// PatchTun is ReCreateTun for a caller that amends the current configuration
-// instead of replacing it, as PATCH /configs does. patch is handed LastTunConf
-// under tunMux. Read before the lock, LastTunConf can still be the value from
-// before a rebuild that is in progress -- at startup the controller is up while
-// the first device is being built, so that is the empty config -- and writing
-// it back then closes the device that rebuild has just brought up.
-func PatchTun(patch func(last LC.Tun) LC.Tun, tunnel C.Tunnel) {
-	tunMux.Lock()
-	tunConf := patch(LastTunConf)
 	tunConf.Sort()
 
-	// The eBPF inbounds publish their route exclusion as they start, which on
-	// the config-apply path is updateListeners, just before this. Reading it
-	// here rather than only inside sing_tun.New is what lets an unchanged tun
-	// section still be rebuilt when an inbound started, stopped, or changed its
-	// bypass policy.
-	ebpfExclude := sing_tun.EBPFRouteExcludeAddress(tunConf.Inet4Address, tunConf.Inet6Address)
+	tunMux.Lock()
 	defer func() {
 		LastTunConf = tunConf
-		lastTunEBPFExclude = ebpfExclude
 		tunMux.Unlock()
 	}()
 
@@ -546,7 +519,7 @@ func PatchTun(patch func(last LC.Tun) LC.Tun, tunnel C.Tunnel) {
 		}
 	}()
 
-	if tunConf.Equal(LastTunConf) && slices.Equal(ebpfExclude, lastTunEBPFExclude) {
+	if tunConf.Equal(LastTunConf) {
 		if tunLister != nil { // some default value in dialer maybe changed when config reload, reset at here
 			tunLister.OnReload()
 		}
@@ -664,13 +637,11 @@ func PatchInboundListeners(newListenerMap map[string]C.InboundListener, tunnel C
 
 	for name, newListener := range newListenerMap {
 		if oldListener, ok := inboundListeners[name]; ok {
-			if oldListener.Config().Equal(newListener.Config()) {
+			if !oldListener.Config().Equal(newListener.Config()) {
+				_ = oldListener.Close()
+			} else {
 				continue
 			}
-			if updateInboundListenerInPlace(name, oldListener, newListener.Config()) {
-				continue
-			}
-			_ = oldListener.Close()
 		}
 		if err := newListener.Listen(tunnel); err != nil {
 			log.Errorln("Listener %s listen err: %s", name, err.Error())
@@ -685,71 +656,6 @@ func PatchInboundListeners(newListenerMap map[string]C.InboundListener, tunnel C
 				_ = oldListener.Close()
 				delete(inboundListeners, name)
 			}
-		}
-	}
-
-	rebuildStaleListeners(tunnel)
-}
-
-// updatableListener is a listener that can absorb some config differences
-// without being rebuilt. Rebuilding is not equally cheap for all of them: the
-// eBPF inbound's kernel state goes with it -- the cgroup redirect table, the
-// shared flow table, the TC assignment map, the UDP recovery table -- so every
-// established redirect breaks, and the rebuild can itself fail and leave the
-// inbound gone until someone reloads again.
-//
-// Update reports handled=false for any difference it will not take, which is
-// the default for everything it has not been taught, and must leave the
-// listener exactly as it was when it returns an error. Both cases fall back to
-// the close-and-rebuild that would have happened anyway, so a listener can
-// implement this for one field and still be correct.
-//
-// A listener that reports handled=true keeps running, and therefore has to
-// start answering for the new config: the next reload compares against
-// Config(), and a stale answer would ask it to apply the same difference again
-// forever.
-type updatableListener interface {
-	Update(newConfig C.InboundConfig) (handled bool, err error)
-}
-
-func updateInboundListenerInPlace(name string, oldListener C.InboundListener, newConfig C.InboundConfig) bool {
-	updatable, ok := oldListener.(updatableListener)
-	if !ok {
-		return false
-	}
-	handled, err := updatable.Update(newConfig)
-	if err != nil {
-		log.Errorln("Listener %s in-place update failed, rebuilding: %s", name, err.Error())
-		return false
-	}
-	return handled
-}
-
-// staleListener is a listener built from state that lives outside its own
-// config, so comparing configs cannot tell whether it is still current. The tun
-// listener is one: sing_tun bakes the route exclusion the eBPF inbounds
-// published into the device's route set.
-type staleListener interface {
-	Stale() bool
-}
-
-// rebuildStaleListeners restarts the listeners whose build inputs moved under
-// them. It runs once every listener has been (re)started, which is what also
-// makes it the fix for startup order: the loop above walks a map, so a tun
-// listener can be built before the eBPF inbound whose bypass it has to keep off
-// the routes has published anything at all -- and an unchanged tun section would
-// never rebuild it again.
-func rebuildStaleListeners(tunnel C.Tunnel) {
-	for name, inboundListener := range inboundListeners {
-		stale, ok := inboundListener.(staleListener)
-		if !ok || !stale.Stale() {
-			continue
-		}
-		log.Infoln("Listener %s restarting: the eBPF route exclusion changed under it", name)
-		_ = inboundListener.Close()
-		if err := inboundListener.Listen(tunnel); err != nil {
-			log.Errorln("Listener %s listen err: %s", name, err.Error())
-			delete(inboundListeners, name)
 		}
 	}
 }
@@ -826,19 +732,5 @@ func closeTunListener() {
 }
 
 func Cleanup() {
-	tunMux.Lock()
 	closeTunListener()
-	// The device is gone, so the config that described it must stop answering
-	// for it: a later ReCreateTun with the same config would otherwise decide
-	// nothing changed and leave the tunnel with no device at all.
-	LastTunConf = LC.Tun{}
-	lastTunEBPFExclude = nil
-	tunMux.Unlock()
-
-	inboundMux.Lock()
-	defer inboundMux.Unlock()
-	for name, current := range inboundListeners {
-		_ = current.Close()
-		delete(inboundListeners, name)
-	}
 }

@@ -1,0 +1,33 @@
+# 上游示例/测试内容（docs/config.yaml、test/*、README）命中的 generic-api-key / pem 等规则均为误报
+# 指纹格式：<commit>:<file>:<rule>:<line>，由 gitleaks 在首次推送全历史时生成
+2008f81895e350570ea87ec8429185838e4a5559:common/ebpf/kernel_compat.go:generic-api-key:18
+9d962843e3cf7179f07771f64d8f654a90d73f92:common/ebpf/kernel_compat.go:generic-api-key:15
+8e2aba40fc9120592703da7ba3e327e24c49fcc8:docs/config.yaml:generic-api-key:1236
+358fa5eb2493901ef4078de948f2a6f4fd1bf055:docs/config.yaml:age-secret-key:1486
+7af9eeb3f8362a2493babcffc40170d4b95bc63a:docs/config.yaml:pem-private-key:1111
+7af9eeb3f8362a2493babcffc40170d4b95bc63a:transport/openvpn/config_test.go:pem-private-key:19
+7af9eeb3f8362a2493babcffc40170d4b95bc63a:transport/openvpn/config_test.go:private-key:19
+885244a9a08d1e94bb5349ee2655a3f89201ff37:docs/config.yaml:generic-api-key:1088
+4ca515896b4a67792a7b727c3c0288a3ca4831cb:docs/config.yaml:generic-api-key:1759
+d685a8fdec4b0d5f37daa8d07fef6f455659c3f1:docs/config.yaml:generic-api-key:988
+e45c896185037a72942861c5e695e8d7bf2495d7:docs/config.yaml:generic-api-key:988
+91324b76d2897bc730e21f05d6161bc597e9d31b:docs/config.yaml:generic-api-key:1249
+91324b76d2897bc730e21f05d6161bc597e9d31b:docs/config.yaml:generic-api-key:1257
+a440f640808d1e6f9fc4cbab2e2238619a6a374c:docs/config.yaml:generic-api-key:1152
+0ac6c3b185da3a7a312f939a1da521c02052e535:docs/config.yaml:generic-api-key:1196
+2f8f139f7c344b8549d4a9605eaf54c983341101:adapter/outbound/wireguard_test.go:generic-api-key:16
+7308c6c2a9ced1a28689f719ce395522b7ec44cc:docs/config.yaml:generic-api-key:624
+7308c6c2a9ced1a28689f719ce395522b7ec44cc:docs/config.yaml:generic-api-key:625
+7308c6c2a9ced1a28689f719ce395522b7ec44cc:docs/config.yaml:generic-api-key:637
+b7d976796aee23da6cb6ea71f2776bf997e3e81d:docs/config.yaml:generic-api-key:704
+7c8d8f56e18518e793e448c0c9c5a28cc37e0e29:docs/config.yaml:generic-api-key:450
+93ada8989fd73759d5ea88741a1dbf4353bac611:README.md:generic-api-key:225
+a562b249a298f9f998be46b2913b938873bfe1cc:test/config/xray-shadowsocks.json:generic-api-key:13
+a562b249a298f9f998be46b2913b938873bfe1cc:test/ss_test.go:generic-api-key:306
+91ed0118f628dd378fb3c74a23f3e46f838012ae:test/ss_test.go:generic-api-key:197
+d5e52bed433c73369e4571cd42b469ddae4afb56:test/ss_test.go:generic-api-key:36
+d5e52bed433c73369e4571cd42b469ddae4afb56:test/ss_test.go:generic-api-key:74
+d5e52bed433c73369e4571cd42b469ddae4afb56:test/ss_test.go:generic-api-key:116
+d5e52bed433c73369e4571cd42b469ddae4afb56:test/ss_test.go:generic-api-key:158
+d5e52bed433c73369e4571cd42b469ddae4afb56:test/config/example.org-key.pem:pem-private-key:1
+d5e52bed433c73369e4571cd42b469ddae4afb56:test/config/example.org-key.pem:private-key:1
